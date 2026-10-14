@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch ~/watch for new files
+
+[Service]
+Type=simple
+ExecStart=%h/bin/watch.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
