@@ -1,0 +1,8 @@
+Port 3333
+PermitRootLogin no
+PubkeyAuthentication yes
+PasswordAuthentication yes
+KbdInteractiveAuthentication yes
+UsePAM yes
+PidFile /run/sshd_debug.pid
+Subsystem sftp /usr/lib/openssh/sftp-server
