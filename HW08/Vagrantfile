@@ -1,0 +1,36 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+Vagrant.configure("2") do |config|
+  # Ubuntu-based box
+  config.vm.box = "bento/ubuntu-24.04"
+  config.vm.box_check_update = false
+  config.vm.hostname = "nginx-vm"
+
+  # Public (bridged) network: VM gets an IP in your home network
+  config.vm.network "public_network"
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "nginx_vm"
+    vb.cpus = 2
+    vb.memory = "2048"
+  end
+
+  # Provisioning: install nginx and move it to port 82 with sed
+  config.vm.provision "shell", inline: <<-SHELL
+    apt-get update
+    apt-get install -y nginx
+
+    # change port 80 -> 82 in the default site
+    sed -i 's/listen 80 default_server;/listen 82 default_server;/' /etc/nginx/sites-available/default
+    sed -i 's/listen \\[::\\]:80 default_server;/listen [::]:82 default_server;/' /etc/nginx/sites-available/default
+
+    nginx -t
+    systemctl restart nginx
+    systemctl enable nginx
+
+    echo "===== nginx is listening on: ====="
+    ss -tlnp | grep nginx
+    echo "===== Open in browser: ====="
+    for ip in $(hostname -I); do echo "http://$ip:82"; done
+  SHELL
+end
