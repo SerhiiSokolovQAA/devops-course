@@ -1,0 +1,96 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+#
+# Spring PetClinic on two VirtualBox VMs
+#   APP_VM (192.168.56.10) - Java + PetClinic on port 8080
+#   DB_VM  (192.168.56.11) - MySQL, reachable only from 192.168.56.0/24
+#
+# Set host environment variables before `vagrant up`:
+#   required: DB_USER, DB_PASS
+#   optional: DB_NAME (petclinic), DB_PORT (3306),
+#             REPO_URL (GitLab https URL; empty = clone the local repo from /vagrant),
+#             REPO_BRANCH (main)
+
+# ---------- Parameters from host ENV ----------
+DB_USER     = ENV["DB_USER"].to_s
+DB_PASS     = ENV["DB_PASS"].to_s
+DB_NAME     = ENV.fetch("DB_NAME", "petclinic")
+DB_PORT     = ENV.fetch("DB_PORT", "3306")
+REPO_URL    = ENV.fetch("REPO_URL", "")
+REPO_BRANCH = ENV.fetch("REPO_BRANCH", "main")
+
+# ---------- Network and names ----------
+BOX         = "bento/ubuntu-24.04"           # Ubuntu 24.04 LTS (already in `vagrant box list`)
+SUBNET      = "192.168.56"                   # VirtualBox host-only default range
+APP_IP      = "#{SUBNET}.10"
+DB_IP       = "#{SUBNET}.11"                 # this is DB_HOST
+
+APP_USER    = "appuser"
+PROJECT_DIR = "/opt/petclinic"
+
+# Validate variables only for commands that create or provision VMs
+if %w[up provision reload].include?(ARGV[0])
+  missing = { "DB_USER" => DB_USER, "DB_PASS" => DB_PASS }.select { |_, v| v.empty? }.keys
+  unless missing.empty?
+    abort "ERROR: environment variables not set: #{missing.join(', ')}\n" \
+          "PowerShell: $env:DB_USER='petuser'; $env:DB_PASS='Petpass123'\n" \
+          "bash:       export DB_USER=petuser DB_PASS=Petpass123"
+  end
+  # Simple characters only, so values pass safely through bash, SQL and systemd
+  abort "ERROR: DB_USER/DB_NAME - letters, digits, _ only" unless [DB_USER, DB_NAME].all? { |v| v =~ /\A\w+\z/ }
+  abort "ERROR: DB_PASS - letters, digits and _ . - @ + = only" unless DB_PASS =~ /\A[\w.@+=-]+\z/
+  abort "ERROR: DB_PORT must be a number" unless DB_PORT =~ /\A\d+\z/
+end
+
+DB_ENV = {
+  "DB_HOST"      => DB_IP,
+  "DB_PORT"      => DB_PORT,
+  "DB_NAME"      => DB_NAME,
+  "DB_USER"      => DB_USER,
+  "DB_PASS"      => DB_PASS,
+  "DB_SUBNET"    => "#{SUBNET}.0/24",        # for the firewall
+  "DB_USER_HOST" => "#{SUBNET}.%",           # MySQL host mask for DB_USER
+}
+
+Vagrant.configure("2") do |config|
+  config.vm.box = BOX
+  config.vm.box_check_update = false
+  config.vm.boot_timeout = 600                # boot is slower when VirtualBox runs on top of Hyper-V
+
+  # ---------- DB_VM: defined first, so it comes up first ----------
+  config.vm.define "db" do |db|
+    db.vm.hostname = "db-vm"
+    db.vm.network "private_network", ip: DB_IP
+
+    db.vm.provider "virtualbox" do |vb|
+      vb.name   = "DB_VM"
+      vb.memory = 1024
+      vb.cpus   = 1
+    end
+
+    db.vm.provision "shell", name: "mysql", path: "provision/db.sh", env: DB_ENV
+  end
+
+  # ---------- APP_VM ----------
+  config.vm.define "app", primary: true do |app|
+    app.vm.hostname = "app-vm"
+    app.vm.network "private_network", ip: APP_IP
+    # Optional with a private network, but also gives access via localhost:8080
+    app.vm.network "forwarded_port", guest: 8080, host: 8080, auto_correct: true
+
+    app.vm.provider "virtualbox" do |vb|
+      vb.name   = "APP_VM"
+      vb.memory = 2048                        # Maven + tests need memory
+      vb.cpus   = 1                           # >1 vCPU hangs at boot when VirtualBox runs on Hyper-V (WSL)
+    end
+
+    app.vm.provision "shell", name: "petclinic", path: "provision/app.sh",
+      env: DB_ENV.merge(
+        "APP_IP"      => APP_IP,
+        "APP_USER"    => APP_USER,
+        "PROJECT_DIR" => PROJECT_DIR,
+        "REPO_URL"    => REPO_URL,
+        "REPO_BRANCH" => REPO_BRANCH,
+      )
+  end
+end
